@@ -1,0 +1,88 @@
+import copy
+import os
+import random
+import numpy as np
+from PIL import Image
+from nets.segnet import convnet_segnet
+import tensorflow as tf
+
+config = tf.compat.v1.ConfigProto(gpu_options=tf.compat.v1.GPUOptions(allow_growth=True))
+sess = tf.compat.v1.Session(config=config)
+
+def main():
+    # ---------------------------------------------------#
+    #   定义了输入图片的颜色，当我们想要去区分两类的时候
+    #   我们定义了两个颜色，分别用于背景和斑马线
+    #   [0,0,0], [0,255,0]代表了颜色的RGB色彩
+    # ---------------------------------------------------#
+    class_colors = [[0, 0, 0], [0, 0, 255]]
+
+    # ---------------------------------------------#
+    #   定义输入图片的高和宽，以及种类数量
+    #   others + 斑马线 = 2
+    # ---------------------------------------------#
+    HEIGHT = 416
+    WIDTH = 416
+    NCLASSES = 2
+
+    # ---------------------------------------------#
+    #   载入模型
+    # ---------------------------------------------#
+    model = convnet_segnet(classes_num=NCLASSES, input_height=HEIGHT, input_width=WIDTH)
+    # --------------------------------------------------#
+    #   载入权重，训练好的权重会保存在logs文件夹里面
+    #   需要将对应的权重载入
+    # --------------------------------------------------#
+    model_path = "logs/ep070-loss0.005-val_loss0.040.h5"
+    model.load_weights(model_path)
+
+    # --------------------------------------------------#
+    #   对imgs文件夹进行一个遍历
+    # --------------------------------------------------#
+    imgs = os.listdir("./img/")
+    for jpg in imgs:
+        # --------------------------------------------------#
+        #   打开imgs文件夹里面的每一个图片
+        #   注意 后面加了个.convert("RGB") 因为 我将网上截图的图片进行检测报错，发现是有四个通道的32位图所以需要转成3通道的RGB图
+        #   https: // www.csdn.net / tags / OtDacg2sNDczNjYtYmxvZwO0O0OO0O0O.html
+        # --------------------------------------------------#
+        img = Image.open("./img/" + jpg).convert("RGB")
+
+        old_img = copy.deepcopy(img)
+        orininal_h = np.array(img).shape[0]
+        orininal_w = np.array(img).shape[1]
+
+        # --------------------------------------------------#
+        #   对输入进来的每一个图片进行Resize
+        #   resize成[HEIGHT, WIDTH, 3]
+        # --------------------------------------------------#
+        img = img.resize((WIDTH, HEIGHT), Image.Resampling.BICUBIC)
+        img = np.array(img) / 255
+        img = img.reshape(-1, HEIGHT, WIDTH, 3)
+
+        # --------------------------------------------------#
+        #   将图像输入到网络当中进行预测
+        # --------------------------------------------------#
+        pr = model.predict(img)[0]
+        pr = pr.reshape((int(HEIGHT / 2), int(WIDTH / 2), NCLASSES)).argmax(axis=-1)
+
+        # ------------------------------------------------#
+        #   创建一副新图，并根据每个像素点的种类赋予颜色
+        # ------------------------------------------------#
+        seg_img = np.zeros((int(HEIGHT / 2), int(WIDTH / 2), 3))
+        for c in range(NCLASSES):
+            seg_img[:, :, 0] += ((pr[:, :] == c) * class_colors[c][0]).astype('uint8')
+            seg_img[:, :, 1] += ((pr[:, :] == c) * class_colors[c][1]).astype('uint8')
+            seg_img[:, :, 2] += ((pr[:, :] == c) * class_colors[c][2]).astype('uint8')
+
+        seg_img = Image.fromarray(np.uint8(seg_img)).resize((orininal_w, orininal_h))
+        # ------------------------------------------------#
+        #   将新图片和原图片混合
+        # ------------------------------------------------#
+        image = Image.blend(old_img, seg_img, 0.3)
+        image.save("./img_out/" + jpg)
+        seg_img.show()
+
+
+if __name__ == "__main__":
+    main()
